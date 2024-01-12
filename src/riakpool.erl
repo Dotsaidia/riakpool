@@ -161,8 +161,8 @@ new_connection(Host, Port) ->
 -spec next_pid(host(), integer(), queue:queue()) -> {ok, pid(), queue:queue()} |
                                                     {error, queue:queue()}.
 next_pid(Host, Port, Pids) ->
-    %% Allow a maximum of 1024 connection
-    case queue:len(Pids) < 1024 of
+    %% Allow a maximum of 512 connection
+    case queue:len(Pids) < 512 of
         true ->
             case new_connection(Host, Port) of
                 {ok, Pid} -> {ok, Pid, queue:in(Pid, Pids)};
