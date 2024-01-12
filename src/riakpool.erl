@@ -54,7 +54,7 @@ count() ->
 %% '''
 -spec execute(fun((pid()) -> any())) -> {ok, Value::any()} | {error, any()}.
 execute(Fun) ->
-    case gen_server:call(?MODULE, check_out, 10000) of
+    case gen_server:call(?MODULE, check_out, infinity) of
         {ok, Pid} ->
             try {ok, Fun(Pid)}
             catch _:E -> {error, E}
