@@ -165,7 +165,7 @@ next_pid(Host, Port, Pids) ->
     case queue:len(Pids) < 128 of
         true ->
             case new_connection(Host, Port) of
-                {ok, Pid} -> {ok, Pid, Pids};
+                {ok, Pid} -> {ok, Pid, queue:in(Pid, Pids)};
                 error -> {error, Pids}
             end;
         false ->
