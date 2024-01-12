@@ -58,7 +58,7 @@ execute(Fun) ->
         {ok, Pid} ->
             try {ok, Fun(Pid)}
             catch _:E -> {error, E}
-            after gen_server:cast(?MODULE, {check_in, Pid}) end;
+            end;
         {error, E} -> {error, E}
     end.
 
