@@ -31,6 +31,8 @@
          terminate/2,
          code_change/3]).
 
+-define(MAX_CONNECTIONS, 128).
+
 -type host() :: string() | atom().
 
 -record(state, {host :: host(), port ::non_neg_integer(), pids}).
@@ -161,16 +163,17 @@ new_connection(Host, Port) ->
 -spec next_pid(host(), integer(), queue:queue()) -> {ok, pid(), queue:queue()} |
                                                     {error, queue:queue()}.
 next_pid(Host, Port, Pids) ->
-    case queue:out(Pids) of
-        {{value, Pid}, NewPids} ->
-            case is_process_alive(Pid) of
-                true -> {ok, Pid, NewPids};
-                false -> next_pid(Host, Port, NewPids)
-            end;
-        {empty, _} ->
+    case queue:len(Pids) < 128  of
+        true ->
             case new_connection(Host, Port) of
                 {ok, Pid} -> {ok, Pid, Pids};
                 error -> {error, Pids}
+            end;
+        false ->
+            {{value, Pid}, NewPids} = queue:out(Pids),
+            case is_process_alive(Pid) of
+                true -> {ok, Pid, queue:in(Pid, NewPids)};
+                false -> next_pid(Host, Port, NewPids)
             end
     end.
 
