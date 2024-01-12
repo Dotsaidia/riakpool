@@ -31,8 +31,6 @@
          terminate/2,
          code_change/3]).
 
--define(MAX_CONNECTIONS, 128).
-
 -type host() :: string() | atom().
 
 -record(state, {host :: host(), port ::non_neg_integer(), pids}).
@@ -163,7 +161,8 @@ new_connection(Host, Port) ->
 -spec next_pid(host(), integer(), queue:queue()) -> {ok, pid(), queue:queue()} |
                                                     {error, queue:queue()}.
 next_pid(Host, Port, Pids) ->
-    case queue:len(Pids) < 128  of
+    %% Allow a maximum of 128 connection
+    case queue:len(Pids) < 128 of
         true ->
             case new_connection(Host, Port) of
                 {ok, Pid} -> {ok, Pid, Pids};
@@ -172,7 +171,9 @@ next_pid(Host, Port, Pids) ->
         false ->
             {{value, Pid}, NewPids} = queue:out(Pids),
             case is_process_alive(Pid) of
-                true -> {ok, Pid, queue:in(Pid, NewPids)};
+                true -> 
+                    % A connection can be used for several request at a time
+                    {ok, Pid, queue:in(Pid, NewPids)};
                 false -> next_pid(Host, Port, NewPids)
             end
     end.
