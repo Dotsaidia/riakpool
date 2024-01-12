@@ -4,4 +4,4 @@
   {registered, []},
   {applications, [kernel, stdlib]},
   {mod, {riakpool_app, []}},
-  {env, []}]}.
+  {env, [{riakpool_host, "127.0.0.1"}, {riakpool_port, 8087}]]}]}.
