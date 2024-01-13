@@ -1,11 +1,11 @@
 %% @author David Weldon
 %% @doc riakpool implements a pool of riak protocol buffer clients. In order to
 %% use a connection, a call to {@link execute/1} must be made. This will check
-%% out a connection from the pool, use it, and check it back in. This ensures
-%% that a given connection can only be in use by one external process at a time.
-%% If no existing connections are found, a new one will be established. Note
-%% this means the pool will always be the size of the last peak need. The number
-%% of connections can be checked with {@link count/0}.
+%% out a connection from the pool to use it, however before using it, it is kept 
+%% usage for other requests at the same time by checking it back in. This ensures
+%% that a given connection can be in use by by several external process at a time.
+%% If no existing connections are found, a new one will be established. A maximum
+%% allowed connections in a pool is tracked.
 %%
 %% Prior to any calls to {@link execute/1}, the pool must be started. This can
 %% be accomplished in one of two ways:
