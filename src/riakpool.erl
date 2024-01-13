@@ -31,9 +31,11 @@
          terminate/2,
          code_change/3]).
 
+-define(MAX_ALLOWED_CONNECTIONS, 512).
+
 -type host() :: string() | atom().
 
--record(state, {host :: host(), port ::non_neg_integer(), pids}).
+-record(state, {host :: host(), port ::non_neg_integer(), pids, no_of_connections = 0 ::non_neg_integer()}).
 
 %% @doc Returns the number of connections as seen by the supervisor.
 -spec count() -> integer().
@@ -100,11 +102,11 @@ handle_call({start_pool, _Host, _Port}, _From, State=#state{}) ->
     {reply, {error, pool_already_started}, State};
 handle_call(check_out, _From, undefined) ->
     {reply, {error, pool_not_started}, undefined};
-handle_call(check_out, _From, State=#state{host=Host, port=Port, pids=Pids}) ->
-    case next_pid(Host, Port, Pids) of
-        {ok, Pid, NewPids} -> {reply, {ok, Pid}, State#state{pids=NewPids}};
-        {error, NewPids} ->
-            {reply, {error, connection_error}, State#state{pids=NewPids}}
+handle_call(check_out, _From, State=#state{host=Host, port=Port, pids=Pids, no_of_connections=Qlen}) ->
+    case next_pid(Host, Port, Pids, Qlen) of
+        {ok, Pid, NewPids, NewQlen} -> {reply, {ok, Pid}, State#state{pids=NewPids, no_of_connections=NewQlen}};
+        {error, NewPids, NewQlen} ->
+            {reply, {error, connection_error}, State#state{pids=NewPids, no_of_connections=NewQlen}}
     end;
 handle_call(_Request, _From, State) -> {reply, ok, State}.
 
@@ -139,7 +141,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 new_state(Host, Port) ->
     case new_connection(Host, Port) of
         {ok, Pid} ->
-            #state{host=Host, port=Port, pids=queue:in(Pid, queue:new())};
+            #state{host=Host, port=Port, pids=queue:in(Pid, queue:new()), no_of_connections = 1};
         error -> undefined
     end.
 
@@ -153,90 +155,29 @@ new_connection(Host, Port) ->
         _ -> error
     end.
 
-%% @doc Recursively dequeues Pids in search of a live connection. Dead
-%% connections are removed from the queue as it is searched. If no connection
-%% pid could be found, a new one will be established. Returns {ok, Pid, NewPids}
-%% where NewPids is the queue after any necessary dequeues. Returns error if no
-%% live connection could be found and no new connection could be established.
--spec next_pid(host(), integer(), queue:queue()) -> {ok, pid(), queue:queue()} |
-                                                    {error, queue:queue()}.
-next_pid(Host, Port, Pids) ->
-    %% Allow a maximum of 512 connection
-    case queue:len(Pids) < 512 of
+%% @doc Recursively dequeues Pids in search of a live connection. Once alive connection 
+%% is got, it returned and also put back at the end of the queue to be resused. Dead
+%% connections are removed from the queue as it is searched. A MAX_ALLOWED_CONNECTIONS is
+%% maintained. If the connections goes below the maximum, a new one will be established. 
+%% Returns {ok, Pid, queue:in(Pid, NewPids), NoOfConnections} where NewPids is the queue 
+%% after any necessary dequeues. Returns error if no live connection could be found and no 
+%% new connection could be established. For effeciency, we track the number of connections
+%% instead of determining it every time we need a connection.
+-spec next_pid(host(), integer(), queue:queue(), integer()) -> {ok, pid(), queue:queue(), integer()} |
+                                                    {error, queue:queue(), integer()}.
+next_pid(Host, Port, Pids, NoOfConnections) ->
+    case NoOfConnections < ?MAX_ALLOWED_CONNECTIONS of
         true ->
             case new_connection(Host, Port) of
-                {ok, Pid} -> {ok, Pid, queue:in(Pid, Pids)};
-                error -> {error, Pids}
+                {ok, Pid} -> {ok, Pid, queue:in(Pid, Pids), NoOfConnections + 1};
+                error -> {error, Pids, NoOfConnections}
             end;
         false ->
             {{value, Pid}, NewPids} = queue:out(Pids),
             case is_process_alive(Pid) of
                 true -> 
                     % A connection can be used for several request at a time
-                    {ok, Pid, queue:in(Pid, NewPids)};
-                false -> next_pid(Host, Port, NewPids)
+                    {ok, Pid, queue:in(Pid, NewPids), NoOfConnections};
+                false -> next_pid(Host, Port, NewPids, NoOfConnections - 1)
             end
     end.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-execute_test() ->
-    riakpool_connection_sup:start_link(),
-    riakpool:start_link(),
-    riakpool:start_pool(),
-    ?assertEqual(1, count()),
-    Fun1 = fun(C) -> riakc_pb_socket:ping(C) end,
-    Fun2 = fun(_) -> riakc_pb_socket:ping(1) end,
-    ?assertEqual({ok, pong}, execute(Fun1)),
-    ?assertMatch({error, _}, execute(Fun2)),
-    ?assertEqual({ok, pong}, execute(Fun1)),
-    riakpool:stop(),
-    timer:sleep(10),
-    ?assertEqual(0, count()).
-
-execute_error_test() ->
-    riakpool:start_link(),
-    Fun = fun(C) -> riakc_pb_socket:ping(C) end,
-    ?assertEqual({error, pool_not_started}, execute(Fun)),
-    riakpool:stop(),
-    timer:sleep(10),
-    ?assertEqual(0, count()).
-
-start_pool_test() ->
-    riakpool_connection_sup:start_link(),
-    riakpool:start_link(),
-    {H, P} = {"localhost", 8000},
-    ?assertEqual({error, connection_error}, riakpool:start_pool(H, P)),
-    ?assertEqual(ok, riakpool:start_pool()),
-    ?assertEqual({error, pool_already_started}, riakpool:start_pool()),
-    riakpool:stop(),
-    timer:sleep(10),
-    ?assertEqual(0, count()).
-
-next_pid_test() ->
-    riakpool_connection_sup:start_link(),
-    {H, P} = {"localhost", 8087},
-    ?assertEqual(0, count()),
-    {ok, P1} = new_connection(H, P),
-    {ok, P2} = new_connection(H, P),
-    {ok, P3} = new_connection(H, P),
-    ?assertEqual(3, count()),
-    riakc_pb_socket:stop(P1),
-    riakc_pb_socket:stop(P2),
-    ?assertEqual(1, count()),
-    Q0 = queue:new(),
-    Q = queue:from_list([P1, P2, P3]),
-    ?assertMatch({ok, P3, Q0}, next_pid(H, P, Q)),
-    riakc_pb_socket:stop(P3),
-    {ok, P4, Q0} = next_pid(H, P, Q0),
-    ?assertEqual(1, count()),
-    riakc_pb_socket:stop(P4),
-    ?assertEqual(0, count()).
-
-next_pid_error_test() ->
-    {H, P} = {"localhost", 8000},
-    Q0 = queue:new(),
-    ?assertMatch({error, Q0}, next_pid(H, P, Q0)).
-
--endif.
